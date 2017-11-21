@@ -94,17 +94,21 @@ class Generation:
     Validation: 2-loop over codewords, each codeword has distance of less than d -> out.
     """
     generation_index = 0
-    pop_size = 100
+
+    pop_size = 300
     pop_size_upper_limit = pop_size * 1.15
+
     members = []
-    fittest = []
-    probabilities = None
-    distance_table = []
+    probabilities = None    # based on fitness of members
+
     selection_percentage = 0.8
-    permutation_percentage = 0.1
+    permutation_percentage = 0.3
+    permutation_insertion_count = 30
     pride_group_size = 3
-    code_length = None
-    vectors_universe = None
+    birth_permutation = True
+
+    vectors_universe = None     # cache
+    distance_table = []     # cache
 
     def __init__(self, members: list, distance_table: list=None):
         self.members = members
@@ -122,25 +126,33 @@ class Generation:
                                                 probabilities=self.probabilities, k=tournament_selection_chunk_size)
         return selected_parents
 
-    def permutation(self, population: list) -> list:
-        members_indices = list(range(len(population)))
-        probabilities = generate_probabilities_based_on_len(population)
-        to_be_permuted_members = np.random.choice(members_indices, size=int(self.permutation_percentage * self.pop_size),
-                                                  replace=False, p=probabilities)
-        for selected_member_index in to_be_permuted_members:
-            temp_code = list(population[selected_member_index])
-            temp_code.append(random.choice(self.vectors_universe))
-            population[selected_member_index] = code_validator(temp_code, self.distance_table)
+    def permute_member(self, member: list, permuting_genes_count: int) -> None:
+        inserting_genes = list(np.random.choice(
+            self.vectors_universe, size=permuting_genes_count, replace=False))
+        member += inserting_genes
 
-        return population
+    def permutation(self, population: list, validate_population: bool=False) -> None:
+        members_indices = list(range(len(population)))
+        to_be_permuted_members_count = min(len(population), int(self.permutation_percentage * self.pop_size))
+        to_be_permuted_members = np.random.choice(members_indices, size=to_be_permuted_members_count, replace=False)
+
+        for selected_member_index in to_be_permuted_members:
+
+            self.permute_member(population[selected_member_index], self.permutation_insertion_count)
+            if validate_population:
+                population[selected_member_index] = code_validator(population[selected_member_index],
+                                                                   self.distance_table)
 
     def crossover(self, selected_parents: list) -> list:
         new_gen = []
 
         for parent1, parent2 in pairwise(selected_parents):
             child1, child2 = crossover_1_point(parent1, parent2)
-            child1 = code_validator(child1, self.distance_table)
-            child2 = code_validator(child2, self.distance_table)
+
+            # permutation on new-born children to try to increase the length (create fitter children)
+            max_len = len(self.members[0]) + self.permutation_insertion_count
+            self.permute_member(child1, permuting_genes_count=max_len - len(child1))
+            self.permute_member(child2, permuting_genes_count=max_len - len(child2))
 
             new_gen += [child1, child2]
 
@@ -154,6 +166,10 @@ class Generation:
         selected_parents = self.selection()
         new_gen = self.crossover(selected_parents)
         self.permutation(new_gen)
+
+        # validating
+        for i in range(len(new_gen)):
+            new_gen[i] = code_validator(new_gen[i], self.distance_table)
 
         if not dry_run:
             new_gen = self.members[:self.pride_group_size] + new_gen
@@ -185,7 +201,7 @@ def init_generation(size: int, distance_table: list) -> list:
     return gen_members
 
 
-n = 7
+n = 8
 d = 4
 population_size = 5
 timer = datetime.now()
@@ -206,14 +222,18 @@ init_gen = list(sorted(init_gen, key=len, reverse=True))
 gen = Generation(members=init_gen, distance_table=hamming_distance_table)
 print('initial M = ' + str(len(gen.members[0])))
 
+break_M = 16
+
 max_M = 0
-for i in range(500):
+for i in range(15000):
     new_pop = gen.new_generation()
     M = len(gen.members[0])
     if M > max_M:
         print('current M = ' + str(M))
         max_M = M
         print('--- computation time so far: ' + str(datetime.now() - timer))
+        if M == break_M:
+            break
 
 print('---------- computation time: ' + str(datetime.now() - timer))
 # print("------ new gen -----")
